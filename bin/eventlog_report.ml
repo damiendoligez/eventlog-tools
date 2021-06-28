@@ -47,7 +47,12 @@ module Events = struct
 
   let get { events; _ } name = Hashtbl.find events name
 
-  let iter t f = Hashtbl.iter f t.events
+  let iter t f =
+    let l = Hashtbl.fold (fun x y acc -> (x, y) :: acc) t.events [] in
+    let cmp (x1, _) (x2, _) =
+      Stdlib.compare (Eventlog.string_of_phase x1) (Eventlog.string_of_phase x2)
+    in
+    List.iter (fun (x, y) -> f x y) (List.sort cmp l)
 
 end
 
@@ -115,26 +120,33 @@ let print_allocs allocs =
   in
   pp_two_columns Format.std_formatter (List.sort Stdlib.compare l)
 
+let print3 suffix x =
+  let s = Printf.sprintf "%3.1f" x in
+  if String.length s > 3 then
+    Printf.sprintf "%3.0f%s" x suffix
+  else
+    s ^ suffix
+
 let pprint_time ns =
   if ns < 1000. then
-    Printf.sprintf "%.0fns" ns
+    print3 "ns" ns
   else if ns < (1_000_000.) then
-    Printf.sprintf "%.0fus" (ns /. 1_000.)
+    print3 "us" (ns /. 1_000.)
   else if ns < (1_000_000_000.) then
-    Printf.sprintf "%.0fms" (ns /. 1_000_000.)
+    print3 "ms" (ns /. 1_000_000.)
   else
-    Printf.sprintf "%.0fs" (ns /. 1_000_000_000.)
+    print3 "s " (ns /. 1_000_000_000.)
 
 let pprint_quantity q =
   if q < 1000. then
-    Printf.sprintf "%.0f " q
+    print3 " " q
   else if q < (1_000_000.) then
-    Printf.sprintf "%.0fk" (q /. 1_000.)
+    print3 "k" (q /. 1_000.)
   else
-    Printf.sprintf "%.0fM" (q /. 1_000_000.)
+    print3 "M" (q /. 1_000_000.)
 
 let bins mul =
-  Array.map (( *. ) mul) [| 100.; 215.; 464.; |]
+  Array.map (( *. ) mul) [| 100.; 147.; 215.; 316.; 464.; 681. |]
 
 let default_bins = Array.concat [
     [| 0. |];
@@ -217,7 +229,7 @@ let main in_file =
   Hashtbl.iter (fun s l -> print_histogram (Eventlog.string_of_gc_counter s) l pprint_quantity) counters;
   print_flushes t.flushs;
   Ok ()
-  
+
 module Args = struct
   open Cmdliner
 
