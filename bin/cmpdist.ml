@@ -109,7 +109,7 @@ let pp_two_columns ?max_lines ppf lines =
   List.iteri (fun k (line_l, line_r) ->
     if k = ellipsed_first then Format.fprintf ppf "...@,";
     if ellipsed_first <= k && k <= ellipsed_last then ()
-    else Format.fprintf ppf "%*s: %s@," left_column_size line_l line_r
+    else Format.fprintf ppf "%*s: %d@," left_column_size line_l line_r
   ) lines;
   Format.fprintf ppf "@]";
   Format.pp_print_newline ppf ()
@@ -118,8 +118,7 @@ let print_allocs allocs =
   print_endline "==== allocs";
   let l =
     Hashtbl.fold begin fun bucket count acc ->
-      (Printf.sprintf "%-11s" (Eventlog.string_of_alloc_bucket bucket),
-       Printf.sprintf "%8d" count)
+      (Printf.sprintf "%-11s" (Eventlog.string_of_alloc_bucket bucket), count)
       :: acc
     end allocs []
   in
@@ -173,30 +172,19 @@ let make_bins max =
   in
   `Bins bins
 
-let make_histogram l =
+let print_histogram name l pprint =
   let open Owl_base_stats in
+  Printf.printf "==== %s\n" name;
   let arr = l |> Array.of_list |> Array.map float_of_int in
   let bins = make_bins (max arr) in
-  histogram bins arr
-
-let print_histogram name l pprint =
-  if name <> "major/mark" && name <> "major/sweep" then () else begin
-    Printf.printf "==== %s\n%!" name;
-    let h = make_histogram l in
-    let fl = Float.of_int (List.length l) in
-    let l = ref [] in
-    let cumul = ref 0. in
-    for i = 0 to (Array.length h.bins - 2) do
-      if h.counts.(i) > 0 then begin
-        cumul := !cumul +. Float.of_int h.counts.(i) /. fl;
-        l := (Printf.sprintf "%-4s..%4s" (pprint h.bins.(i))
-                (pprint h.bins.(i + 1)),
-              Printf.sprintf "%6d %f" h.counts.(i) !cumul)
-             ::!l
-      end
-    done;
-    pp_two_columns Format.std_formatter !l
-  end
+  let h = histogram bins arr in
+  let l = ref [] in
+  for i = 0 to (Array.length h.bins - 2) do
+    if h.counts.(i) > 0 then
+          l := (Printf.sprintf "%-4s..%4s" (pprint h.bins.(i)) (pprint h.bins.(i + 1)),
+                h.counts.(i))::!l
+  done;
+  pp_two_columns Format.std_formatter !l
 
 let print_events_stats name events =
   match Events.get events name with
@@ -212,6 +200,33 @@ let print_flushes flushs =
   Printf.printf "total flush time: %s\n" (pprint_time total);
   Printf.printf "flush count: %d\n" (List.length flushs)
 
+let make_histogram l =
+  let open Owl_base_stats in
+  let arr = l |> Array.of_list |> Array.map float_of_int in
+  let bins = make_bins (max arr) in
+  histogram bins arr
+
+let compare_distribs l1 l2 =
+  let d1 = 1. /. (Float.of_int (List.length l1)) in
+  let d2 = -1. /. (Float.of_int (List.length l2)) in
+  let h1 = make_histogram l1 in
+  let h2 = make_histogram l2 in
+  let l1 = Array.to_list h1.counts in
+  let l2 = Array.to_list h2.counts in
+  let rec f l1 l2 lo hi cur =
+    let step delta ll1 ll2 =
+      let cur = cur +. delta in
+      f ll1 ll2 (Float.min lo cur) (Float.max hi cur) cur
+    in
+    match l1, l2 with
+    | [], h2 :: t2 -> step (Float.of_int h2 *. d2) [] t2
+    | h1 :: t1, [] -> step (Float.of_int h1 *. d1) t1 []
+    | h1 :: t1, h2 :: t2 ->
+      step (Float.of_int h1 *. d1 +. Float.of_int h2 *. d2) t1 t2
+    | [], [] -> (lo, hi)
+  in
+  f l1 l2 0. 0. 0.
+
 let load_file path =
   let open Rresult.R.Infix in
   Fpath.of_string path
@@ -219,7 +234,7 @@ let load_file path =
   >>= fun content ->
   Ok (Bigstringaf.of_string ~off:0 ~len:(String.length content) content)
 
-let main in_file =
+let main in_file numeric =
   let module P = Eventlog.Parser in
   load_file in_file >>= fun data ->
   let decoder = P.decoder () in
@@ -242,11 +257,20 @@ let main in_file =
     | `Await -> Ok ()
   in
   aux () >>= fun () ->
-  print_allocs allocs;
-  Events.iter events (fun phase _ -> print_events_stats phase events);
-  Hashtbl.iter (fun s l -> print_histogram (Eventlog.string_of_gc_counter s)
-      l pprint_quantity) counters;
-  print_flushes t.flushs;
+  let marks = ref [] and sweeps = ref [] in
+  let f phase l =
+    match Eventlog.string_of_phase phase with
+    | "major/mark" -> marks := l
+    | "major/sweep" -> sweeps := l
+    | _ -> ()
+  in
+  Events.iter events f;
+  let (lo, hi) = compare_distribs !marks !sweeps in
+  if numeric then
+    Printf.printf "%f\n" (Float.max (-. lo) hi)
+  else
+    Printf.printf "ECDF distance min=%f max=%f\n" lo hi
+  ;
   Ok ()
 
 module Args = struct
@@ -255,6 +279,10 @@ module Args = struct
   let trace =
     let doc = "Print a basic report from an OCaml eventlog file" in
     Arg.(required & pos 0 (some string) None  & info [] ~doc )
+
+  let numeric =
+    let doc = "output a single number" in
+    Arg.(value & flag & info ["v"] ~doc)
 
   let info =
     let doc = "" in
@@ -269,4 +297,4 @@ end
 
 let () =
   let open Cmdliner in
-  Term.exit @@ Term.eval Term.(const main  $ Args.trace, Args.info)
+  Term.exit @@ Term.eval Term.(const main $ Args.trace $ Args.numeric, Args.info)

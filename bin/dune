@@ -9,3 +9,9 @@
  (modules eventlog_to_chrome)
  (public_name ocaml-eventlog-to-chrome)
  (libraries cmdliner bos fpath rresult jsonm eventlog))
+
+(executable
+ (name cmpdist)
+ (modules cmpdist)
+ (public_name ocaml-cmp-dist)
+ (libraries cmdliner bos fpath rresult owl-base eventlog))
