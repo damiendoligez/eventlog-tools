@@ -32,6 +32,7 @@ let phase = [|
   "minor/update_weak";
   "minor/finalized";
   "explicit/gc_major_slice";
+  "modify_batch";
 |]
 
 let gc_counter = [|
@@ -53,6 +54,8 @@ let gc_counter = [|
   "request_minor/realloc_ref_table";
   "request_minor/realloc_ephe_ref_table";
   "request_minor/realloc_custom_table";
+  "ref_table_cache/hit";
+  "ref_table_cache/miss";
 |]
 
 let alloc_bucket = [|
